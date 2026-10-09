@@ -206,7 +206,7 @@ launch-op/1
 7. Set the supplementary groups to none, then the GID, then the UID (real, effective and saved), and verify that root cannot be regained (`privilege_drop_failed`).
 8. Exec the verified executable (on Linux by descriptor with `execveat`; on macOS by its path in the root-owned directory).
 
-sudo stays the parent of the executor and relays signals, so the dispatcher owns the process's lifetime through the sudo process it started. The executor is trusted platform code: it reads the plan, resolves the protected credential binding, obtains its lease from the broker on a fresh connection and execs the harness (broker §12.2). Arbitrary `sudo -u` or a general command runner is never a substitute for the launcher.
+The execution's lifetime belongs to the dispatcher: it stops an execution only through `exec.stop` (§4.7). sudo may or may not remain a parent, depending on its policy, and is never relied on to relay signals (it cannot forward SIGKILL). The executor is trusted platform code: it reads the plan, resolves the protected credential binding, obtains its lease from the broker on a fresh connection and execs the harness (broker §12.2). Arbitrary `sudo -u` or a general command runner is never a substitute for the launcher.
 
 ## 8. Firewall per account (v1)
 
