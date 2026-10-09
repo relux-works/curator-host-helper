@@ -2,7 +2,7 @@
 
 A minimal privileged helper for agent systems. It runs as root for one command at a time, through a sudoers rule that admits only its absolute path, and performs a closed set of host operations: creating and removing per-agent and per-service OS users, and (next) installing per-UID firewall rules so that an agent's traffic can leave only through its network profile.
 
-**Status: design in progress.** Nothing is implemented yet. The specification will live in `spec/`.
+**Status: design in progress.** Nothing is implemented yet. The specification is [`spec/helper.md`](spec/helper.md).
 
 ## Principles
 
