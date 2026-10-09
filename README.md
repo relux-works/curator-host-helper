@@ -16,3 +16,7 @@ A minimal privileged helper for agent systems. It runs as root for one command a
 
 - The dispatcher (or, until it exists, a Curator command) calls the helper to create an agent's OS user, then binds that user in curator-credential-broker and registers it with the key keeper.
 - curator-credential-broker runs under a service user the helper creates.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Authors: Ivan Oparin and Alexey Grigorev.
