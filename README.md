@@ -1,21 +1,25 @@
 # curator-host-helper
 
-A minimal privileged helper for agent systems. It runs as root for one command at a time, through a sudoers rule that admits only its absolute path, and performs a closed set of host operations: creating and removing per-agent and per-service OS users, and (next) installing per-UID firewall rules so that an agent's traffic can leave only through its network profile.
+Two minimal privileged components for agent systems. Each runs as root for one operation at a time, through a sudoers rule that admits only its absolute path with no arguments, and performs a closed set of host operations:
 
-**Status: design in progress.** Nothing is implemented yet. The specification is [`spec/helper.md`](spec/helper.md).
+- **curator-host-helper** creates, lists and retires per-agent and per-service OS accounts, and (next) installs per-account firewall rules so that an agent's traffic can leave only through its network profile;
+- **curator-host-launcher** starts one approved executor under one active agent account, so that an unprivileged dispatcher can run an agent as that account without general `sudo` rights.
+
+**Status: design in progress.** Nothing is implemented yet. The specification is [`spec/helper.md`](spec/helper.md); diagrams are in [`diagrams/`](diagrams/).
 
 ## Principles
 
-- A closed operation schema read from stdin (`helper-op/1`), never free-form arguments.
-- The helper chooses user names and UIDs from its own ranges; callers pass only a validated label.
-- It removes only accounts it created itself (a root-owned ledger), and never touches pre-existing accounts.
-- Every operation is journaled and rolled back on failure, and leaves an audit line naming the caller.
-- Later: it re-verifies the signed grant behind each request instead of trusting the caller.
+- Closed operation schemas read from stdin (`helper-op/1`, `launch-op/1`), never free-form arguments, commands or environment.
+- Per-caller policy: installers manage service accounts, dispatchers manage only the agents they created.
+- The helper chooses account names and UIDs from its own ranges; every creation gets a generation that is never reused.
+- It acts only on accounts it created (a root-owned ledger), never on pre-existing accounts, and works on files through descriptors without following links.
+- One lock serialises everything; creation rolls back on failure, retirement moves forward from its commit point; every operation leaves an audit line naming the caller.
+- Later: it re-verifies the signed grant behind each request instead of trusting the configured policy alone.
 
 ## How it fits
 
-- The dispatcher (or, until it exists, a Curator command) calls the helper to create an agent's OS user, then binds that user in curator-credential-broker and registers it with the key keeper.
-- curator-credential-broker runs under a service user the helper creates.
+- The dispatcher (or, until it exists, a Curator command) creates an agent's account with the helper, binds that account's generation in curator-credential-broker, and starts the agent's executor through the launcher; the executor then obtains its credential lease from the broker itself.
+- curator-credential-broker runs under a service account the helper creates, and reads the helper's ledger to check generations.
 
 ## License
 

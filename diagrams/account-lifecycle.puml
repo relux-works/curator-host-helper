@@ -1,0 +1,18 @@
+@startuml account-lifecycle
+!theme plain
+title Agent account lifecycle (one generation; generations are never reused)
+
+[*] --> creating : user.create\n(under the helper lock: allocate UID/GID,\nledger entry, journal)
+creating --> active : account, group and home created\n(v1: egress denial installed first)
+creating --> [*] : failure or crash →\nrolled back by recovery
+active --> active : launch.start (launcher)\nfw.apply (v1)
+active --> retiring : user.retire\n(commit point: persisted first)
+retiring --> retiring : processes remain →\nretry later (removal only moves forward)
+retiring --> removed : launcher and broker refuse the generation;\nprocesses stopped and verified;\nhome quarantined, archived or deleted;\naccount, group, then rules removed
+removed --> [*]
+note right of retiring
+  from here the launcher refuses new starts,
+  the broker refuses leases,
+  and crash recovery resumes forward
+end note
+@enduml
