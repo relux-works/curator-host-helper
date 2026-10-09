@@ -178,7 +178,7 @@ In the platform design the helper is a handler process that independently limits
 
 | Caller | Operations | Then |
 |---|---|---|
-| dispatcher (v0: `curator agent-user`) | `user.create {agent}`, `user.retire`, `fw.apply`, `fw.remove`, `launch.start` | binds the generation in the broker before `launch.start`; unbinds before `user.retire` |
+| curator-dispatcher (service account `cur-s-dispatch`; Curator's `agent-user` is its client) | `user.create {agent}`, `user.retire`, `fw.apply`, `fw.remove`, `launch.start` | binds the generation in the broker before `launch.start`; unbinds before `user.retire` |
 | platform installer | `user.create {service}`, `user.retire {service}` | installs the broker and other services under those accounts |
 | broker | reads the ledger and the applied state | checks generations and network state before leasing |
 

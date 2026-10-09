@@ -18,7 +18,7 @@ Two minimal privileged components for agent systems. Each runs as root for one o
 
 ## How it fits
 
-- The dispatcher (or, until it exists, a Curator command) creates an agent's account with the helper, binds that account's generation in curator-credential-broker, and starts the agent's executor through the launcher; the executor then obtains its credential lease from the broker itself.
+- [curator-dispatcher](https://github.com/relux-works/curator-dispatcher), under its own service account, creates an agent's account with the helper, binds that account's generation in curator-credential-broker, and starts the agent's executor through the launcher; the executor then obtains its credential lease from the broker itself.
 - curator-credential-broker runs under a service account the helper creates, and reads the helper's ledger to check generations.
 
 ## License
