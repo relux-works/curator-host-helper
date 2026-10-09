@@ -1,8 +1,12 @@
 # curator-host-helper: specification
 
-- **Status:** draft v0.2 (2026-10-09). Nothing is implemented.
+- **Status:** draft v0.3 (2026-10-10). Nothing is implemented.
 - **Normative language:** MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
 - **Companions:** [curator-credential-broker](https://github.com/relux-works/curator-credential-broker) (binds the OS accounts this helper creates), [curator-network-profiles](https://github.com/relux-works/curator-network-profiles) (the egress an agent may use).
+
+### Revision 0.3
+
+Owner decisions of 2026-10-10 and the dispatcher review: one platform root `/opt/swarma` with a fixed layout (§4.0); account names `swarma-<service>` and `swa-<label>` (proposed); agent UIDs 30000–59999 allocated round-robin with cleanup before reuse (§4.1); retired homes archived with configured retention (§4.4.1); an authorised `exec.stop` for one execution (§4.7); launcher start receipts and execution ids, the agent home as the working directory, and a payload budget (§7).
 
 ### Revision 0.2
 
@@ -26,16 +30,16 @@ Both run as root for one operation at a time, are invoked through `sudo` by conf
 ## 2. Invocation
 
 - Each binary is installed at a fixed root-owned path, is not setuid, and every directory on its path is root-owned and not writable by others.
-- The sudoers rule allows a configured caller to run exactly that path **with no arguments**, using the empty argument specification, for example `cur-dispatch ALL=(root) NOPASSWD: /usr/local/libexec/curator-host-helper ""`. The binaries also refuse any argument (`argv_not_allowed`).
+- The sudoers rule allows a configured caller to run exactly that path **with no arguments**, using the empty argument specification, for example `swarma-dispatch ALL=(root) NOPASSWD: /opt/swarma/libexec/curator-host-helper ""`. The binaries also refuse any argument (`argv_not_allowed`).
 - The binary refuses unless its effective UID is 0 (`not_root`) and `SUDO_UID` is present and a plain decimal number (`not_invoked_by_sudo`). `SUDO_UID` is the caller's identity only because sudo set it during a trusted transition; it is not proof of the caller's executable, and root callers are outside this boundary.
 - The binary clears its environment, sets a fixed `PATH`, working directory and umask, and calls operating-system tools only by absolute path, never through a shell.
-- The request is exactly one JSON document on stdin, at most 16 KiB, read within 5 seconds (`request_too_large`, `request_timeout`). Duplicate keys, unknown members, a trailing document, strings longer than their declared bound and arrays longer than theirs are refused (`request_invalid`).
+- The request is exactly one JSON document on stdin, read within 5 seconds: at most 16 KiB for `helper-op/1` and 80 KiB for `launch-op/1` (`request_too_large`, `request_timeout`). Duplicate keys, unknown members, a trailing document, strings longer than their declared bound and arrays longer than theirs are refused (`request_invalid`).
 - The answer is one JSON document on stdout; diagnostics go to the audit log.
 
 ```
 helper-op/1
 { v: 1,
-  op:         "user.create" | "user.retire" | "user.list" | "fw.apply" | "fw.remove",
+  op:         "user.create" | "user.retire" | "user.list" | "exec.stop" | "archive.sweep" | "fw.apply" | "fw.remove",
   request_id: string (≤ 64),           // idempotency key, §4.4
   args:       { … per operation … } }
 
@@ -52,7 +56,7 @@ A root-owned configuration lists callers by UID and gives each a role:
 
 | Role | May |
 |---|---|
-| `installer` | create and retire **service** accounts it names in the configuration |
+| `installer` | create and retire **service** accounts it names in the configuration; run `archive.sweep` |
 | `dispatcher` | create agent accounts up to its quota; retire, launch and apply rules only for agent accounts **it created** (`created_by` = its principal) |
 | `operator` | everything above, including retiring protected service accounts |
 
@@ -60,10 +64,27 @@ Requests outside the caller's role are refused (`caller_role_not_permitted`, `ta
 
 ## 4. Accounts
 
+### 4.0 Layout
+
+```
+/opt/swarma/                 root 0755
+  libexec/                   root 0755: curator-host-helper, curator-host-launcher, curator-dispatcher
+  etc/                       root 0755: host-helper.json (policy, ranges, archive), approved-executors.json
+  lib/helper/                root: ledger.json (0644), receipts/ (0644 files), applied-state/ (0644), journal/ and lock (0700)
+  run/                       socket directories of the services (broker/, dispatcher/), 0755
+  services/<account>/        homes of service accounts, 0700
+  agents/<account>/          homes of agent accounts, 0700 (work/, tmp/ and harness state inside)
+  quarantine/                root 0700: homes moved here at retirement
+  archive/                   root 0700: compressed homes of retired agents
+```
+
+The root is chosen at installation (for example on a separate volume); every path below is relative to it.
+
 ### 4.1 Names and identifiers
 
-- Agent accounts are named `cur-a-<label>`, service accounts `cur-s-<name>`. `label` and `name` MUST match `[a-z0-9][a-z0-9-]{0,22}` (`label_invalid`).
-- UIDs and GIDs come from configured ranges, one for agents and one for services, chosen per OS so that the accounts stay hidden from login windows and do not collide with system accounts. The helper picks the lowest value that is free both in the directory service and in its ledger, under the helper lock (§4.4); it never accepts a UID from the caller.
+- Agent accounts are named `swa-<label>`, service accounts `swarma-<name>` (proposed names, pending the owner's confirmation). `label` and `name` MUST match `[a-z0-9][a-z0-9-]{0,22}` (`label_invalid`).
+- UIDs and GIDs come from configured ranges: agents 30000–59999 on both systems; services 450–499 on macOS and 900–999 on Linux. Agents are hidden from login windows by attribute, services by range.
+- **Allocation is round-robin:** the helper keeps a cursor in its ledger and takes the next value after the last one it issued that is free in the directory service and in its ledger, wrapping at the end of the range. A value is reused only after a full cycle, and only when no file owned by it remains under the platform root, in the system temporary directories and in the account's per-user temporary area (`uid_not_clean` otherwise). The helper never accepts a UID from the caller.
 - Each account gets its own primary group with the same name and number and no supplementary groups.
 - Each creation gets a **generation**: an identifier that is never reused, even when the UID or label is.
 
@@ -83,7 +104,7 @@ creating → active → retiring → removed
 
 ```
 args:   { kind: "agent" | "service", label: "dev-7f3" }
-result: { username: "cur-a-dev-7f3", uid: 612, gid: 612, home: "<agents root>/cur-a-dev-7f3",
+result: { username: "swa-dev-7f3", uid: 30412, gid: 30412, home: "/opt/swarma/agents/swa-dev-7f3",
           generation: "g-0193", state: "active" }
 ```
 
@@ -105,8 +126,28 @@ result: { username, generation, state: "removed", archive?: path }
 2. Ask the broker to end the generation's binding where one exists (the dispatcher normally unbinds first; the broker also refuses any retiring generation on its own, broker §4.2).
 3. Stop the account's per-user service domain where the OS has one, terminate every process of the UID and verify that none remain for a quiet period (`processes_remain` leaves the account in `retiring` for a later retry).
 4. (v1) Keep the account's egress denial in place until step 6.
-5. Move the home into a root-owned quarantine directory on the same file system, then archive or delete it with a descriptor-relative walk (§6).
+5. Move the home into `quarantine/` on the same file system, then archive or delete it with a descriptor-relative walk (§6) according to §4.4.1. Remove the account's files in the system temporary directories and its per-user temporary area.
 6. Remove the account and group, then the firewall rules, and persist `removed`.
+
+#### 4.4.1 Archive policy
+
+The `archive` block of `etc/host-helper.json`:
+
+```json
+"archive": {
+  "default_on_retire": "archive",
+  "dir": "/opt/swarma/archive",
+  "format": "tar.zst",
+  "retention": { "max_age": "7d", "max_total": "20GiB", "max_per_archive": "2GiB" },
+  "exclude": ["**/node_modules", "**/.cache", "**/DerivedData", "**/target", "**/.build", "**/go-build"],
+  "keep_requires": "operator"
+}
+```
+
+- `user.retire { home: "archive" | "delete" | "keep" }` overrides the default; `keep` (no expiry) requires an operator caller.
+- An archive is named `<account>-<generation>-<date>.tar.zst`, owned by root, mode 0600; links are archived as links (§6).
+- A home larger than `max_per_archive` after exclusions is deleted and the audit log says so.
+- `archive.sweep` (at every retirement and from a daily root timer) removes archives older than `max_age`, then the oldest ones until the total is under `max_total`.
 
 ### 4.5 `user.list` and the ledger
 
@@ -118,6 +159,15 @@ The ledger is a root-owned, world-readable file with one record per generation: 
 - Every operation writes generation-scoped journal records of planned and completed steps before acting. Recovery runs first in every invocation and compares the actual operating-system objects with the journal before each action: an interrupted creation is rolled back, an interrupted retirement is resumed.
 - `request_id` is scoped to the caller's principal. A repeated `(caller, request_id)` with the same operation and canonical arguments returns the recorded result together with the target's **current** state, so an old success never looks like a live account; different arguments are refused (`request_id_conflict`).
 - Every operation appends one line to a root-owned audit log: time, caller, operation, arguments, result.
+
+### 4.7 `exec.stop`
+
+```
+args:   { generation: "g-0193", execution_id: "EX-…", grace_seconds: 10 }
+result: { execution_id, stopped_at, receipt: { signalled, killed, remaining: 0 } }
+```
+
+Allowed to the dispatcher for generations it created. The helper reads the execution's start receipt (§7), sends SIGTERM to the execution's process session, waits up to the grace period, sends SIGKILL, and then verifies that no process of the account that started at or after the receipt remains (escaped descendants included; v0 allows one execution per generation, so every such process belongs to it). It returns the receipt only when the count is zero (`processes_remain` otherwise, and the call may be repeated with the same request id). It never signals by an unqualified UID: the generation must be active and match the receipt.
 
 ## 5. Cross-component reconciliation
 
@@ -140,19 +190,21 @@ launch-op/1
 { v: 1,
   op:         "launch.start",
   request_id: string (≤ 64),
-  generation: "g-0193",
-  executor:   "curator-executor",          // an id from the approved list
-  cwd:        "work/run-42",               // relative to the agent's home
-  plan:       base64 (≤ 64 KiB) }          // delivered to the executor on descriptor 3
+  generation:   "g-0193",
+  execution_id: "EX-…",                      // from the dispatcher's execution claim
+  epoch:        3,
+  executor:     "curator-executor",          // an id from the approved list
+  plan:         base64 (decoded ≤ 48 KiB) }  // delivered to the executor on descriptor 3; request ≤ 80 KiB
 ```
 
 1. Under the shared lock, read the ledger: the generation is `active`, of kind agent, and created by the calling dispatcher (`generation_not_active`, `target_not_owned`).
 2. Resolve `executor` in the root-owned approved list to an absolute path in a root-owned directory and a SHA-256 digest; open the file without following links and verify the digest (`executor_not_approved`, `executable_digest_mismatch`).
-3. Open `cwd` beneath the agent's home without following links (`cwd_invalid`).
+3. Use the agent's home as the working directory, opened without following links; the executor prepares `work/` and `tmp/` inside it under the agent's own UID.
 4. Close every descriptor above 2, then create a pipe, write `plan` into it and place its read end at descriptor 3. Standard input, output and error are the caller's (its pipes or terminal); no other descriptor crosses the transition.
 5. Build the environment from a fixed set (`HOME`, `USER`, `LOGNAME`, `PATH`, `LANG`, `TMPDIR` inside the home); nothing is inherited.
-6. Set the supplementary groups to none, then the GID, then the UID (real, effective and saved), and verify that root cannot be regained (`privilege_drop_failed`).
-7. Exec the verified executable (on Linux by descriptor with `execveat`; on macOS by its path in the root-owned directory).
+6. Refuse if a start receipt for this `execution_id` already exists (`execution_already_started`); otherwise write the **start receipt** `lib/helper/receipts/<generation>/<execution_id>.json` (`{ execution_id, epoch, pid, start_time, boot_id, session_id }`, mode 0644, atomic), then start a new session (`setsid`) so the execution is one process session.
+7. Set the supplementary groups to none, then the GID, then the UID (real, effective and saved), and verify that root cannot be regained (`privilege_drop_failed`).
+8. Exec the verified executable (on Linux by descriptor with `execveat`; on macOS by its path in the root-owned directory).
 
 sudo stays the parent of the executor and relays signals, so the dispatcher owns the process's lifetime through the sudo process it started. The executor is trusted platform code: it reads the plan, resolves the protected credential binding, obtains its lease from the broker on a fresh connection and execs the harness (broker §12.2). Arbitrary `sudo -u` or a general command runner is never a substitute for the launcher.
 
@@ -178,7 +230,7 @@ In the platform design the helper is a handler process that independently limits
 
 | Caller | Operations | Then |
 |---|---|---|
-| curator-dispatcher (service account `cur-s-dispatch`; Curator's `agent-user` is its client) | `user.create {agent}`, `user.retire`, `fw.apply`, `fw.remove`, `launch.start` | binds the generation in the broker before `launch.start`; unbinds before `user.retire` |
+| curator-dispatcher (service account `swarma-dispatch`; Curator's `agent-user` is its client) | `user.create {agent}`, `user.retire`, `exec.stop`, `fw.apply`, `fw.remove`, `launch.start` | binds the generation in the broker before `launch.start`; unbinds before `user.retire` |
 | platform installer | `user.create {service}`, `user.retire {service}` | installs the broker and other services under those accounts |
 | broker | reads the ledger and the applied state | checks generations and network state before leasing |
 
@@ -217,7 +269,7 @@ Tests that create accounts, start processes under them or change firewall rules 
 
 ## Appendix A. Error codes
 
-`argv_not_allowed`, `not_root`, `not_invoked_by_sudo`, `caller_not_permitted`, `caller_role_not_permitted`, `target_not_owned`, `quota_exceeded`, `request_too_large`, `request_timeout`, `request_invalid`, `op_unknown`, `request_id_conflict`, `grants_unsupported`, `label_invalid`, `range_exhausted`, `user_exists_unmanaged`, `home_exists_unmanaged`, `generation_not_active`, `state_conflict`, `processes_remain`, `path_is_link`, `step_failed_rolled_back`, `executor_not_approved`, `executable_digest_mismatch`, `cwd_invalid`, `privilege_drop_failed`, `fw_target_not_allowed`, `fw_unsupported`.
+`argv_not_allowed`, `not_root`, `uid_not_clean`, `execution_already_started`, `not_invoked_by_sudo`, `caller_not_permitted`, `caller_role_not_permitted`, `target_not_owned`, `quota_exceeded`, `request_too_large`, `request_timeout`, `request_invalid`, `op_unknown`, `request_id_conflict`, `grants_unsupported`, `label_invalid`, `range_exhausted`, `user_exists_unmanaged`, `home_exists_unmanaged`, `generation_not_active`, `state_conflict`, `processes_remain`, `path_is_link`, `step_failed_rolled_back`, `executor_not_approved`, `executable_digest_mismatch`, `cwd_invalid`, `privilege_drop_failed`, `fw_target_not_allowed`, `fw_unsupported`.
 
 ## Appendix B. Diagrams
 

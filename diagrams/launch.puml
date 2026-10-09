@@ -10,12 +10,12 @@ participant "Executor\n(agent account, uid 612)" as E
 participant "Broker" as B
 
 D -> D: close broker connections (no descriptor may cross)
-D -> S: sudo /usr/local/libexec/curator-host-launcher\n(stdin: launch-op/1 {generation g-0193, executor, cwd, plan})
+D -> S: sudo /opt/swarma/libexec/curator-host-launcher\n(stdin: launch-op/1 {generation, execution_id, epoch, executor, plan})
 S -> L: exec as root (SUDO_UID = dispatcher)
 L -> R: shared lock; g-0193 active, kind agent, created by this dispatcher?
 L -> R: executor id → approved path + SHA-256
 L -> L: open the executable without following links; verify the digest
-L -> L: open cwd beneath the agent's home (no links)
+L -> L: start receipt; setsid; home as cwd
 L -> L: close descriptors > 2; plan → pipe → descriptor 3;\nfixed environment; clear groups; set GID, UID; root cannot be regained
 L -> E: exec the verified executor as uid 612
 E -> E: read the plan; resolve the protected credential binding
