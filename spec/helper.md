@@ -193,7 +193,7 @@ launch-op/1
   generation:   "g-0193",
   execution_id: "EX-…",                      // from the dispatcher's execution claim
   epoch:        3,
-  executor:     "curator-executor",          // an id from the approved list
+  executor:     "curator-agent-runtime",     // an id from the approved list
   plan:         base64 (decoded ≤ 48 KiB) }  // delivered to the executor on descriptor 3; request ≤ 80 KiB
 ```
 
