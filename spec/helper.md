@@ -6,7 +6,7 @@
 
 ### Revision 0.3
 
-Owner decisions of 2026-10-10 and the dispatcher review: one platform root `/opt/swarma` with a fixed layout (§4.0); account names `swarma-<service>` and `swa-<label>` (proposed); agent UIDs 30000–59999 allocated round-robin with cleanup before reuse (§4.1); retired homes archived with configured retention (§4.4.1); an authorised `exec.stop` for one execution (§4.7); launcher start receipts and execution ids, the agent home as the working directory, and a payload budget (§7).
+Owner decisions of 2026-10-10 and the dispatcher review: one platform root `/opt/swarma` with a fixed layout (§4.0); account names `swarma-<service>` for services and `worker-<label>` for agents; agent UIDs 30000–59999 allocated round-robin with cleanup before reuse (§4.1); retired homes archived with configured retention (§4.4.1); an authorised `exec.stop` for one execution (§4.7); launcher start receipts and execution ids, the agent home as the working directory, and a payload budget (§7).
 
 ### Revision 0.2
 
@@ -73,7 +73,7 @@ Requests outside the caller's role are refused (`caller_role_not_permitted`, `ta
   lib/helper/                root: ledger.json (0644), receipts/ (0644 files), applied-state/ (0644), journal/ and lock (0700)
   run/                       socket directories of the services (broker/, dispatcher/), 0755
   services/<account>/        homes of service accounts, 0700
-  agents/<account>/          homes of agent accounts, 0700 (work/, tmp/ and harness state inside)
+  workers/<account>/         homes of agent accounts, 0700 (work/, tmp/ and harness state inside)
   quarantine/                root 0700: homes moved here at retirement
   archive/                   root 0700: compressed homes of retired agents
 ```
@@ -82,7 +82,7 @@ The root is chosen at installation (for example on a separate volume); every pat
 
 ### 4.1 Names and identifiers
 
-- Agent accounts are named `swa-<label>`, service accounts `swarma-<name>` (proposed names, pending the owner's confirmation). `label` and `name` MUST match `[a-z0-9][a-z0-9-]{0,22}` (`label_invalid`).
+- Agent accounts are named `worker-<label>`, where the label is usually the profile and a short id (`worker-dev-7f3`); service accounts are named `swarma-<name>` (owner decision 2026-10-10). Both stay within the 32-character limit of Linux user names. `label` and `name` MUST match `[a-z0-9][a-z0-9-]{0,22}` (`label_invalid`).
 - UIDs and GIDs come from configured ranges: agents 30000–59999 on both systems; services 450–499 on macOS and 900–999 on Linux. Agents are hidden from login windows by attribute, services by range.
 - **Allocation is round-robin:** the helper keeps a cursor in its ledger and takes the next value after the last one it issued that is free in the directory service and in its ledger, wrapping at the end of the range. A value is reused only after a full cycle, and only when no file owned by it remains under the platform root, in the system temporary directories and in the account's per-user temporary area (`uid_not_clean` otherwise). The helper never accepts a UID from the caller.
 - Each account gets its own primary group with the same name and number and no supplementary groups.
@@ -104,7 +104,7 @@ creating → active → retiring → removed
 
 ```
 args:   { kind: "agent" | "service", label: "dev-7f3" }
-result: { username: "swa-dev-7f3", uid: 30412, gid: 30412, home: "/opt/swarma/agents/swa-dev-7f3",
+result: { username: "worker-dev-7f3", uid: 30412, gid: 30412, home: "/opt/swarma/workers/worker-dev-7f3",
           generation: "g-0193", state: "active" }
 ```
 
