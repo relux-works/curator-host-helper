@@ -4,13 +4,13 @@ title Starting an executor under an agent account through the launcher
 
 participant "Dispatcher\n(unprivileged, configured caller)" as D
 participant "sudo" as S
-participant "curator-host-launcher\n(root, no arguments)" as L
+participant "swarma-user-launcher\n(root, no arguments)" as L
 database "Ledger + policy\n(root-owned)" as R
 participant "Executor\n(agent account, uid 612)" as E
 participant "Broker" as B
 
 D -> D: close broker connections (no descriptor may cross)
-D -> S: sudo /opt/swarma/libexec/curator-host-launcher\n(stdin: launch-op/1 {generation, execution_id, epoch, executor, plan})
+D -> S: sudo /opt/swarma/libexec/swarma-user-launcher\n(stdin: launch-op/1 {generation, execution_id, epoch, executor, plan})
 S -> L: exec as root (SUDO_UID = dispatcher)
 L -> R: shared lock; g-0193 active, kind agent, created by this dispatcher?
 L -> R: executor id → approved path + SHA-256

@@ -1,8 +1,8 @@
-# curator-host-helper: specification
+# swarma-user-manager: specification
 
 - **Status:** draft v0.3 (2026-10-10). Nothing is implemented.
 - **Normative language:** MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
-- **Companions:** [curator-credential-broker](https://github.com/relux-works/curator-credential-broker) (binds the OS accounts this helper creates), [curator-network-profiles](https://github.com/relux-works/curator-network-profiles) (the egress an agent may use).
+- **Companions:** [swarma-credential-broker](https://github.com/relux-works/swarma-credential-broker) (binds the OS accounts this helper creates), [curator-network-profiles](https://github.com/relux-works/curator-network-profiles) (the egress an agent may use).
 
 ### Revision 0.3
 
@@ -16,8 +16,8 @@ An architecture review on 2026-10-09 kept the closed, root-owned design and aske
 
 An agent system gets a real boundary between agents on one machine by running each agent under its own OS account: processes of different accounts cannot read each other's files or memory, and kernel firewalls can match traffic by account. Creating accounts, starting processes under them and installing firewall rules need root. This repository holds the only components with that power, and each holds it narrowly:
 
-- **curator-host-helper** creates, lists and retires accounts and (v1) applies per-account firewall rules;
-- **curator-host-launcher** starts one approved executable under one active agent account.
+- **swarma-user-manager** creates, lists and retires accounts and (v1) applies per-account firewall rules;
+- **swarma-user-launcher** starts one approved executable under one active agent account.
 
 Both run as root for one operation at a time, are invoked through `sudo` by configured callers, accept only operations from closed, versioned schemas, choose names and identifiers themselves, act only on what they manage, journal their steps, and serialise on one lock.
 
@@ -30,7 +30,7 @@ Both run as root for one operation at a time, are invoked through `sudo` by conf
 ## 2. Invocation
 
 - Each binary is installed at a fixed root-owned path, is not setuid, and every directory on its path is root-owned and not writable by others.
-- The sudoers rule allows a configured caller to run exactly that path **with no arguments**, using the empty argument specification, for example `swarma-dispatch ALL=(root) NOPASSWD: /opt/swarma/libexec/curator-host-helper ""`. The binaries also refuse any argument (`argv_not_allowed`).
+- The sudoers rule allows a configured caller to run exactly that path **with no arguments**, using the empty argument specification, for example `swarma-dispatcher ALL=(root) NOPASSWD: /opt/swarma/libexec/swarma-user-manager ""`. The binaries also refuse any argument (`argv_not_allowed`).
 - The binary refuses unless its effective UID is 0 (`not_root`) and `SUDO_UID` is present and a plain decimal number (`not_invoked_by_sudo`). `SUDO_UID` is the caller's identity only because sudo set it during a trusted transition; it is not proof of the caller's executable, and root callers are outside this boundary.
 - The binary clears its environment, sets a fixed `PATH`, working directory and umask, and calls operating-system tools only by absolute path, never through a shell.
 - The request is exactly one JSON document on stdin, read within 5 seconds: at most 16 KiB for `helper-op/1` and 80 KiB for `launch-op/1` (`request_too_large`, `request_timeout`). Duplicate keys, unknown members, a trailing document, strings longer than their declared bound and arrays longer than theirs are refused (`request_invalid`).
@@ -68,9 +68,9 @@ Requests outside the caller's role are refused (`caller_role_not_permitted`, `ta
 
 ```
 /opt/swarma/                 root 0755
-  libexec/                   root 0755: curator-host-helper, curator-host-launcher, curator-dispatcher
-  etc/                       root 0755: host-helper.json (policy, ranges, archive), approved-executors.json
-  lib/helper/                root: ledger.json (0644), receipts/ (0644 files), applied-state/ (0644), journal/ and lock (0700)
+  libexec/                   root 0755: swarma-user-manager, swarma-user-launcher, swarma-dispatcher
+  etc/                       root 0755: user-manager.json (policy, ranges, archive), approved-executors.json
+  lib/user-manager/                root: ledger.json (0644), receipts/ (0644 files), applied-state/ (0644), journal/ and lock (0700)
   run/                       socket directories of the services (broker/, dispatcher/), 0755
   services/<account>/        homes of service accounts, 0700
   workers/<account>/         homes of agent accounts, 0700 (work/, tmp/ and harness state inside)
@@ -131,7 +131,7 @@ result: { username, generation, state: "removed", archive?: path }
 
 #### 4.4.1 Archive policy
 
-The `archive` block of `etc/host-helper.json`:
+The `archive` block of `etc/user-manager.json`:
 
 ```json
 "archive": {
@@ -181,7 +181,7 @@ A dispatcher's request id ties together the helper's `user.create`, the broker's
 - Inside a home, symbolic links are ordinary objects: archiving records them as links and deletion unlinks them; neither follows them. A home therefore never becomes unremovable because it contains links.
 - Destructive walks start only after the account is quiescent (§4.4) and the home has been moved into quarantine, so no process of the account can swap a directory during the walk.
 
-## 7. The launcher (`curator-host-launcher`)
+## 7. The launcher (`swarma-user-launcher`)
 
 The launcher is the narrow transition from a dispatcher into an agent account that the platform design calls for: it starts one approved executor, and nothing else, under one active agent generation.
 
@@ -193,7 +193,7 @@ launch-op/1
   generation:   "g-0193",
   execution_id: "EX-…",                      // from the dispatcher's execution claim
   epoch:        3,
-  executor:     "curator-agent-runtime",     // an id from the approved list
+  executor:     "curator-run",     // an id from the approved list
   plan:         base64 (decoded ≤ 48 KiB) }  // delivered to the executor on descriptor 3; request ≤ 80 KiB
 ```
 
@@ -202,7 +202,7 @@ launch-op/1
 3. Use the agent's home as the working directory, opened without following links; the executor prepares `work/` and `tmp/` inside it under the agent's own UID.
 4. Close every descriptor above 2, then create a pipe, write `plan` into it and place its read end at descriptor 3. Standard input, output and error are the caller's (its pipes or terminal); no other descriptor crosses the transition.
 5. Build the environment from a fixed set (`HOME`, `USER`, `LOGNAME`, `PATH`, `LANG`, `TMPDIR` inside the home); nothing is inherited.
-6. Refuse if a start receipt for this `execution_id` already exists (`execution_already_started`); otherwise write the **start receipt** `lib/helper/receipts/<generation>/<execution_id>.json` (`{ execution_id, epoch, pid, start_time, boot_id, session_id }`, mode 0644, atomic), then start a new session (`setsid`) so the execution is one process session.
+6. Refuse if a start receipt for this `execution_id` already exists (`execution_already_started`); otherwise write the **start receipt** `lib/user-manager/receipts/<generation>/<execution_id>.json` (`{ execution_id, epoch, pid, start_time, boot_id, session_id }`, mode 0644, atomic), then start a new session (`setsid`) so the execution is one process session.
 7. Set the supplementary groups to none, then the GID, then the UID (real, effective and saved), and verify that root cannot be regained (`privilege_drop_failed`).
 8. Exec the verified executable (on Linux by descriptor with `execveat`; on macOS by its path in the root-owned directory).
 
@@ -230,7 +230,7 @@ In the platform design the helper is a handler process that independently limits
 
 | Caller | Operations | Then |
 |---|---|---|
-| curator-dispatcher (service account `swarma-dispatch`; Curator's `agent-user` is its client) | `user.create {agent}`, `user.retire`, `exec.stop`, `fw.apply`, `fw.remove`, `launch.start` | binds the generation in the broker before `launch.start`; unbinds before `user.retire` |
+| swarma-dispatcher (service account `swarma-dispatcher`; Curator's `agent-user` is its client) | `user.create {agent}`, `user.retire`, `exec.stop`, `fw.apply`, `fw.remove`, `launch.start` | binds the generation in the broker before `launch.start`; unbinds before `user.retire` |
 | platform installer | `user.create {service}`, `user.retire {service}` | installs the broker and other services under those accounts |
 | broker | reads the ledger and the applied state | checks generations and network state before leasing |
 
